@@ -21,8 +21,6 @@ st.markdown(
 This dashboard is built for **student-wise, subject-wise, and teacher-wise attendance analysis**.
 
 - Use the filters in the sidebar to slice the data.
-- Attendance file is auto-detected based on name pattern.
-- Student/teacher master stays the same (can be changed from sidebar if needed).
 """
 )
 
@@ -422,3 +420,4 @@ if show_source and "Source_File" in filtered_df.columns:
 raw_table = filtered_df[display_cols].sort_values(["Date", "Student_Name"])
 
 st.dataframe(raw_table, use_container_width=True)
+
