@@ -125,6 +125,7 @@ selected_teachers = st.sidebar.multiselect(
 )
 
 # Date range filter
+# Date range filter - dynamic based on current file
 min_date = df["Date"].min().date()
 max_date = df["Date"].max().date()
 
@@ -134,7 +135,9 @@ date_range = st.sidebar.date_input(
     min_value=min_date,
     max_value=max_date,
     help="Filter attendance between these dates",
+    key=f"date_range_{attendance_path}",  # 👈 important: reset when file changes
 )
+
 
 # Ensure date_range is a pair
 if isinstance(date_range, tuple) or isinstance(date_range, list):
@@ -361,5 +364,6 @@ if show_source and "Source_File" in filtered_df.columns:
 raw_table = filtered_df[display_cols].sort_values(["Date", "Student_Name"])
 
 st.dataframe(raw_table, use_container_width=True)
+
 
 
