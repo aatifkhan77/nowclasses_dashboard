@@ -1,6 +1,9 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import glob
+import os
+from datetime import date as date_cls
 
 # ------------------------------
 # Streamlit Page Configuration
@@ -18,7 +21,8 @@ st.markdown(
 This dashboard is built for **student-wise, subject-wise, and teacher-wise attendance analysis**.
 
 - Use the filters in the sidebar to slice the data.
-- You can change the Excel file paths in the sidebar if needed.
+- Attendance file is auto-detected based on name pattern.
+- Student/teacher master stays the same (can be changed from sidebar if needed).
 """
 )
 
@@ -34,6 +38,8 @@ def load_data(attendance_path: str, student_master_path: str):
 
     # Basic cleaning / type conversion
     attendance["Date"] = pd.to_datetime(attendance["Date"], errors="coerce")
+    attendance = attendance.dropna(subset=["Date"])  # ensure valid dates
+
     attendance["Duration_Minutes"] = (
         attendance["Duration_Minutes"].fillna(0).astype(float)
     )
@@ -59,18 +65,35 @@ def load_data(attendance_path: str, student_master_path: str):
 # ------------------------------
 st.sidebar.header("📁 Data Files")
 
-default_attendance_path = "attendance_master_normalized_november.xlsx"
-default_student_master_path = "nowclasses_final_master.xlsx"
+# Auto-detect attendance files in current folder
+attendance_files = glob.glob("*attendance_master*.xlsx")
 
-attendance_path = st.sidebar.text_input(
-    "Attendance file path",
-    value=default_attendance_path,
-    help="Path to attendance_master_normalized_november.xlsx",
+if not attendance_files:
+    st.sidebar.error(
+        "No attendance file found matching `*attendance_master*.xlsx` in this folder.\n\n"
+        "Place your attendance file (e.g. `attendance_master_normalized_november.xlsx`) "
+        "in the same folder as this script."
+    )
+    st.stop()
+
+# Sort by modified time (oldest → newest)
+attendance_files = sorted(attendance_files, key=os.path.getmtime)
+
+# Default: latest file
+default_index = len(attendance_files) - 1
+
+attendance_path = st.sidebar.selectbox(
+    "Select attendance file",
+    options=attendance_files,
+    index=default_index,
+    help="All files matching *attendance_master*.xlsx in this folder",
 )
+
+# Student/teacher master stays fixed (but can be changed if needed)
 student_master_path = st.sidebar.text_input(
     "Student master file path",
-    value=default_student_master_path,
-    help="Path to nowclasses_final_master.xlsx",
+    value="nowclasses_final_master.xlsx",
+    help="Master file for students/teachers (remains same)",
 )
 
 data_loaded = False
@@ -86,7 +109,8 @@ if attendance_path and student_master_path:
     except Exception as e:
         st.error(f"❌ Error loading files: {e}")
 
-if not data_loaded:
+if not data_loaded or df is None or df.empty:
+    st.error("No valid data loaded from the selected files.")
     st.stop()
 
 # ------------------------------
@@ -94,8 +118,12 @@ if not data_loaded:
 # ------------------------------
 st.sidebar.header("🔍 Filters")
 
-# Drop rows with invalid/missing dates
+# Ensure no missing dates
 df = df.dropna(subset=["Date"])
+
+if df.empty:
+    st.error("No valid rows with dates found in attendance file.")
+    st.stop()
 
 # Student filter
 student_list = sorted(df["Student_Name"].dropna().unique().tolist())
@@ -124,10 +152,15 @@ selected_teachers = st.sidebar.multiselect(
     help="Leave empty to include all teachers",
 )
 
-# Date range filter
-# Date range filter - dynamic based on current file
+# ------------------------------
+# Date range filter – dynamic from file
+# ------------------------------
 min_date = df["Date"].min().date()
 max_date = df["Date"].max().date()
+
+# Safety: ensure min_date <= max_date
+if min_date > max_date:
+    min_date, max_date = max_date, min_date
 
 date_range = st.sidebar.date_input(
     "Date range",
@@ -135,17 +168,33 @@ date_range = st.sidebar.date_input(
     min_value=min_date,
     max_value=max_date,
     help="Filter attendance between these dates",
-    key=f"date_range_{attendance_path}",  # 👈 important: reset when file changes
+    key=f"date_range_{attendance_path}",  # reset when file changes
 )
 
-
-# Ensure date_range is a pair
-if isinstance(date_range, tuple) or isinstance(date_range, list):
-    start_date = date_range[0]
-    end_date = date_range[1] if len(date_range) > 1 else date_range[0]
+# Normalize date_range into start_date, end_date
+if isinstance(date_range, (list, tuple)):
+    if len(date_range) == 0:
+        start_date = min_date
+        end_date = max_date
+    elif len(date_range) == 1:
+        start_date = date_range[0]
+        end_date = date_range[0]
+    else:
+        start_date, end_date = date_range[0], date_range[1]
 else:
+    # Single date selected
     start_date = date_range
     end_date = date_range
+
+# Ensure they are date objects
+if isinstance(start_date, pd.Timestamp):
+    start_date = start_date.date()
+if isinstance(end_date, pd.Timestamp):
+    end_date = end_date.date()
+
+# Safety: swap if user selects in wrong order
+if start_date > end_date:
+    start_date, end_date = end_date, start_date
 
 # ------------------------------
 # Apply Filters
@@ -171,7 +220,11 @@ filtered_df = filtered_df[
 ]
 
 if filtered_df.empty:
-    st.warning("No data found for the selected filters.")
+    st.warning(
+        f"No data found for the selected filters.\n\n"
+        f"Attendance file: `{attendance_path}`\n"
+        f"Date range: {start_date} → {end_date}"
+    )
     st.stop()
 
 # ------------------------------
@@ -223,10 +276,11 @@ student_summary["Last_Date"] = student_summary["Last_Date"].dt.date
 
 st.dataframe(student_summary, use_container_width=True)
 
-st.bar_chart(
-    data=student_summary.set_index("Student_Name")["Total_Duration_Hours"],
-    use_container_width=True,
-)
+if not student_summary.empty:
+    st.bar_chart(
+        data=student_summary.set_index("Student_Name")["Total_Duration_Hours"],
+        use_container_width=True,
+    )
 
 st.markdown("---")
 
@@ -248,10 +302,11 @@ with c_left:
         .sort_values("Total_Duration_Hours", ascending=False)
     )
     st.dataframe(teacher_summary, use_container_width=True)
-    st.bar_chart(
-        data=teacher_summary.set_index("Teacher_Name")["Total_Duration_Hours"],
-        use_container_width=True,
-    )
+    if not teacher_summary.empty:
+        st.bar_chart(
+            data=teacher_summary.set_index("Teacher_Name")["Total_Duration_Hours"],
+            use_container_width=True,
+        )
 
 with c_right:
     st.subheader("📚 Subject-wise Summary")
@@ -266,10 +321,11 @@ with c_right:
         .sort_values("Total_Duration_Hours", ascending=False)
     )
     st.dataframe(subject_summary_all, use_container_width=True)
-    st.bar_chart(
-        data=subject_summary_all.set_index("Subject")["Total_Duration_Hours"],
-        use_container_width=True,
-    )
+    if not subject_summary_all.empty:
+        st.bar_chart(
+            data=subject_summary_all.set_index("Subject")["Total_Duration_Hours"],
+            use_container_width=True,
+        )
 
 st.markdown("---")
 
@@ -299,10 +355,11 @@ if len(selected_students) == 1:
 
     st.dataframe(student_subject_summary, use_container_width=True)
 
-    st.bar_chart(
-        data=student_subject_summary.set_index("Subject")["Total_Duration_Hours"],
-        use_container_width=True,
-    )
+    if not student_subject_summary.empty:
+        st.bar_chart(
+            data=student_subject_summary.set_index("Subject")["Total_Duration_Hours"],
+            use_container_width=True,
+        )
 
     # Date-wise breakdown (total duration per date)
     st.markdown("#### 🗓️ Date-wise Total Duration")
@@ -315,10 +372,11 @@ if len(selected_students) == 1:
 
     st.dataframe(daily_summary, use_container_width=True)
 
-    st.line_chart(
-        data=daily_summary.set_index("Session_Date")["Total_Duration_Hours"],
-        use_container_width=True,
-    )
+    if not daily_summary.empty:
+        st.line_chart(
+            data=daily_summary.set_index("Session_Date")["Total_Duration_Hours"],
+            use_container_width=True,
+        )
 
     # Date x Subject table: which dates, which subject, how long
     st.markdown("#### 🗓️📚 Date & Subject-wise Attendance (Table)")
@@ -364,6 +422,3 @@ if show_source and "Source_File" in filtered_df.columns:
 raw_table = filtered_df[display_cols].sort_values(["Date", "Student_Name"])
 
 st.dataframe(raw_table, use_container_width=True)
-
-
-
