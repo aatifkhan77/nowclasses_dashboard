@@ -65,7 +65,7 @@ default_student_master_path = "nowclasses_final_master.xlsx"
 attendance_path = st.sidebar.text_input(
     "Attendance file path",
     value=default_attendance_path,
-    help="Path to attendance_master_normalized_new.xlsx",
+    help="Path to attendance_master_normalized_november.xlsx",
 )
 student_master_path = st.sidebar.text_input(
     "Student master file path",
@@ -361,4 +361,5 @@ if show_source and "Source_File" in filtered_df.columns:
 raw_table = filtered_df[display_cols].sort_values(["Date", "Student_Name"])
 
 st.dataframe(raw_table, use_container_width=True)
+
 
